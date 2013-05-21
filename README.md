@@ -1,0 +1,1 @@
+This is the frontend (PC Side) to my Intel Hex Programmer. It's written with Qt5, which you'll need to compile it. If you install Qt5 and try to open the .pro file, it should be ready to go.
