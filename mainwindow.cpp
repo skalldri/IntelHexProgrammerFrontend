@@ -3,6 +3,8 @@
 #include <QSerialPort>
 #include <QtCore>
 
+QByteArray lastLine;
+
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
@@ -49,7 +51,9 @@ void MainWindow::program()
     }
 
     if(port->isOpen())
+    {
         port->close();
+    }
 
     QSerialPortInfo info;
 
@@ -57,6 +61,7 @@ void MainWindow::program()
     {
         if(info.portName() == ui->portList->currentText())
         {
+            qDebug() << "Port selected";
             port->setPort(info);
             break;
         }
@@ -64,15 +69,18 @@ void MainWindow::program()
 
     port->setBaudRate(QSerialPort::Baud9600);
     port->setDataBits(QSerialPort::Data8);
+    port->setStopBits(QSerialPort::OneStop);
     port->setParity(QSerialPort::NoParity);
+    port->setFlowControl(QSerialPort::NoFlowControl);
 
     if(port->open(QIODevice::ReadWrite))
     {
         qDebug("Port open");
     }
 
-    port->waitForReadyRead(10000);
     ui->statusBar->showMessage("Programming... (this may take a while)");
+
+    serialReady();
 }
 
 void MainWindow::serialDataReceived()
@@ -80,20 +88,39 @@ void MainWindow::serialDataReceived()
     QString msg = QString(port->readAll());
     message += msg;
 
-    //qDebug() << "Message partial received: " << msg;
-
-    if(msg.contains('!'))
+    if(msg.contains('>') && !messageFinished)
     {
-        if(message.contains("ERR"))
+        messageFinished = true;
+
+        if(message.contains("ERR") || message.contains("WARN"))
         {
-            port->close();
-            qDebug() << "WARNING: PROGRAMMER THREW ERROR DURING PROGRAMMING. HALTING.";
+            qDebug() << "WARNING: PROGRAMMER THREW ERROR DURING PROGRAMMING.";
             qDebug() << message;
+
+            ui->statusBar->showMessage("WARNING: Programming error detected");
+
+            QObject::disconnect(port, SIGNAL(readyRead()), this, SLOT(serialDataReceived()));
+
+            port->write(QByteArray(1, '\n'));
+            QThread::msleep(500);
+            port->write(QByteArray(1, '\n'));
+            QThread::msleep(500);
+
+            qDebug() << port->readAll();
+
+            QObject::connect(port, SIGNAL(readyRead()), this, SLOT(serialDataReceived()));
+
+            qDebug() << "Writing " << lastLine;
+
+            message = "";
+            messageFinished = false;
+            port->write(lastLine);
             return;
         }
 
-        messageFinished = true;
+        ui->statusBar->showMessage("Programming... (this may take a while)");
         qDebug() << message;
+        QThread::msleep(200);
         emit hardwareResponseFinished();
     }
 }
@@ -119,9 +146,11 @@ void MainWindow::serialReady()
     {
         //TODO: remove trailing endline char from line
         QByteArray line = hexFile->readLine();
+        line.truncate(line.length() - 2);
+        line.append('\n');
+        lastLine = line;
         qDebug() << "Writing " << line;
         port->write(line);
-        port->write("*");
     }
     else
     {
